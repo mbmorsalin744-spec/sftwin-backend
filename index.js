@@ -26,6 +26,13 @@ async function verifyToken(req, res, next) {
 }
 
 // ============================================
+// HEALTH CHECK - ঘুমাবে না
+// ============================================
+app.get('/health', (req, res) => {
+  res.json({ status: 'alive', time: Date.now() });
+});
+
+// ============================================
 // BET PLACE
 // ============================================
 app.post('/placeBet', verifyToken, async (req, res) => {
@@ -141,6 +148,51 @@ app.post('/resolveBets', verifyToken, async (req, res) => {
     }
 
     res.json({ success: true, totalWin });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// WITHDRAW
+// ============================================
+app.post('/withdraw', verifyToken, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { method, amount, account } = req.body;
+
+    if (!amount || amount < 120) return res.status(400).json({ error: 'Minimum withdrawal 120' });
+    if (!account || account.length < 5) return res.status(400).json({ error: 'Invalid account' });
+
+    const userRef = db.ref('users/' + uid);
+    let success = false;
+
+    await userRef.transaction((ud) => {
+      if (!ud) return ud;
+      if (ud.status === 'banned') return;
+      if ((ud.winningBalance || 0) < amount) return;
+      ud.winningBalance -= amount;
+      success = true;
+      return ud;
+    });
+
+    if (!success) return res.status(400).json({ error: 'Insufficient balance or banned' });
+
+    const snap = await db.ref('users/' + uid).once('value');
+    const userData = snap.val();
+
+    await db.ref('withdrawals').push({
+      uid,
+      userUID: userData.uid || '',
+      name: userData.name || '',
+      method: method || '',
+      amount,
+      account,
+      status: 'pending',
+      time: Date.now()
+    });
+
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
